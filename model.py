@@ -13,10 +13,13 @@ import streamlit.components.v1 as components
 import folium
 from streamlit_folium import st_folium
 import json
+from sklearn.metrics import mean_absolute_error
 
+# --------------------------------
+# Stil
+# --------------------------------
 st.markdown("""
     <style>
-    /* Sidebar arka planı */
     section[data-testid="stSidebar"] {
         background: linear-gradient(to bottom, #fff7e6, #ffd7b5);
         border-right: 2px solid #ffcc80;
@@ -26,69 +29,64 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------------
-# Veri Yükleme ve Model Eğitimi
+# ✅ Cache'li Model Eğitim Fonksiyonu
 # --------------------------------
-df = pd.read_csv("hepsiemlakpreprocessing.csv", encoding="utf-8")
+@st.cache_resource
+def train_models_once():
+    # -------------------------
+    # Kiralık Model Eğitimi
+    # -------------------------
+    df = pd.read_csv("hepsiemlakpreprocessing.csv", encoding="utf-8")
+    le_konut = LabelEncoder()
+    df["Konut Tipi Encoded"] = le_konut.fit_transform(df["Konut Tipi"])
+    konut_mapping = dict(zip(le_konut.classes_, le_konut.transform(le_konut.classes_)))
+    y = df["Fiyat"]
+    X = df[[
+        "Konut Tipi Encoded", "Oda Sayısı", "Kat", "Net m2", "Brüt m2", "Kat Sayısı",
+        "Bina Yaşı", "Banyo Sayısı", "Eşya Durumu", "Isınma Tipi Encoded",
+        "Yapının Durumu Encoded", "Yapı Tipi Encoded", "Yakıt Tipi Encoded",
+        "İlçe Encoded", "Mahalle Encoded", "Aidat", "Depozito",
+        "Cephe_Kuzey", "Cephe_Güney", "Cephe_Doğu", "Cephe_Batı", "Cephe_Bilinmiyor"
+    ]]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=144)
+    model = LGBMRegressor(learning_rate=0.1, max_depth=7, n_estimators=500,
+                          colsample_bytree=0.6, min_child_samples=10, min_child_weight=0.001, num_leaves=30)
+    model.fit(X_train, y_train)
+    model_mae = mean_absolute_error(y_test, model.predict(X_test))
 
-# Konut Tipi - LabelEncoder
-le_konut = LabelEncoder()
-df["Konut Tipi Encoded"] = le_konut.fit_transform(df["Konut Tipi"])
-konut_mapping = dict(zip(le_konut.classes_, le_konut.transform(le_konut.classes_)))
+    # -------------------------
+    # Satılık Model Eğitimi
+    # -------------------------
+    df2 = pd.read_csv("satılıkpreprocessing.csv", encoding="utf-8")
+    le_konut2 = LabelEncoder()
+    df2["Konut Tipi Encoded"] = le_konut2.fit_transform(df2["Konut Tipi"])
+    konut_mapping2 = dict(zip(le_konut2.classes_, le_konut2.transform(le_konut2.classes_)))
+    y2 = df2["Fiyat"]
+    X2 = df2[[
+        "Konut Tipi Encoded", "Oda Sayısı", "Kat", "Net m2", "Brüt m2", "Kat Sayısı",
+        "Bina Yaşı", "Banyo Sayısı", "Eşya Durumu", "Isınma Tipi Encoded",
+        "Yapının Durumu Encoded", "Yapı Tipi Encoded", "Yakıt Tipi Encoded",
+        "İlçe Encoded", "Mahalle Encoded", "Krediye Uygunluk",
+        "Cephe_Kuzey", "Cephe_Güney", "Cephe_Doğu", "Cephe_Batı", "Cephe_Bilinmiyor"
+    ]]
+    X_train2, X_test2, y_train2, y_test2 = train_test_split(X2, y2, test_size=0.2, random_state=42)
+    model2 = LGBMRegressor(
+        learning_rate=0.1, max_depth=-1, n_estimators=500, colsample_bytree=0.8,
+        min_child_samples=5, num_leaves=70, reg_alpha=0.1, reg_lambda=1, subsample=0.6
+    )
+    model2.fit(X_train2, y_train2)
+    model2_mae = mean_absolute_error(y_test2, model2.predict(X_test2))
 
-# Hedef değişken
-y = df["Fiyat"]
+    return model, model_mae, model2, model2_mae, df, df2 , konut_mapping, konut_mapping2 ,X, X2, X_test, y_test ,X_test2 ,y_test2
 
-# Feature set
-X = df[[
-    "Konut Tipi Encoded", "Oda Sayısı", "Kat", "Net m2", "Brüt m2", "Kat Sayısı",
-    "Bina Yaşı", "Banyo Sayısı", "Eşya Durumu", "Isınma Tipi Encoded",
-    "Yapının Durumu Encoded", "Yapı Tipi Encoded", "Yakıt Tipi Encoded",
-    "İlçe Encoded", "Mahalle Encoded", "Aidat", "Depozito",
-    "Cephe_Kuzey", "Cephe_Güney", "Cephe_Doğu", "Cephe_Batı", "Cephe_Bilinmiyor"
-]]
+# --------------------------------
+# Model ve verileri sadece bir kez eğit ve yükle
+# --------------------------------
+model, model_mae, model2, model2_mae, df, df2 , konut_mapping, konut_mapping2 ,X, X2, X_test, y_test ,X_test2 ,y_test2 = train_models_once()
 
-# Model eğitimi
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=144)
-model = LGBMRegressor(learning_rate=0.1, max_depth=7, n_estimators=500,
-                      colsample_bytree=0.6, min_child_samples=10, min_child_weight=0.001, num_leaves=30)
-model.fit(X_train, y_train)
-
-from sklearn.metrics import mean_absolute_error
-y_pred = model.predict(X_test)
-model_mae = mean_absolute_error(y_test, y_pred)
-
-
-df2 = pd.read_csv("satılıkpreprocessing.csv", encoding="utf-8")
-
-# Encoding ve eşleştirmeler
-le_konut2 = LabelEncoder()
-df2["Konut Tipi Encoded"] = le_konut2.fit_transform(df2["Konut Tipi"])
-konut_mapping2 = dict(zip(le_konut2.classes_, le_konut2.transform(le_konut2.classes_)))
-
-# Feature ve hedef
-y2 = df2["Fiyat"]
-X2 = df2[[
-    "Konut Tipi Encoded", "Oda Sayısı", "Kat", "Net m2", "Brüt m2", "Kat Sayısı",
-    "Bina Yaşı", "Banyo Sayısı", "Eşya Durumu", "Isınma Tipi Encoded",
-    "Yapının Durumu Encoded", "Yapı Tipi Encoded", "Yakıt Tipi Encoded",
-    "İlçe Encoded", "Mahalle Encoded", "Krediye Uygunluk",
-    "Cephe_Kuzey", "Cephe_Güney", "Cephe_Doğu", "Cephe_Batı", "Cephe_Bilinmiyor"
-]]
-
-# Model eğitimi
-X_train2, X_test2, y_train2, y_test2 = train_test_split(X2, y2, test_size=0.2, random_state=42)
-model2 = LGBMRegressor(
-    learning_rate=0.1, max_depth=-1, n_estimators=500, colsample_bytree=0.8,
-    min_child_samples=5, num_leaves=70, reg_alpha=0.1, reg_lambda=1, subsample=0.6
-)
-model2.fit(X_train2, y_train2)
-y_pred2 = model2.predict(X_test2)
-model2_mae = mean_absolute_error(y_test2, y_pred2)
 # --------------------------------
 # Streamlit Arayüzü
 # --------------------------------
-# --------------------------------
-# Page selection
 if "page" not in st.session_state:
     st.session_state.page = "ℹ️ Home Page"
 
@@ -111,10 +109,7 @@ st.session_state.page = selected_page
 
 if st.session_state.page != "ℹ️ Home Page":
     st.title("🏠 BEstate - Istanbul Housing Price Prediction System")
-# --------------------------------
-# Page 1 - Rent Price Prediction
-# --------------------------------
-# --------------------------------
+
 # Page 1 - Rent Price Prediction
 # --------------------------------
 
